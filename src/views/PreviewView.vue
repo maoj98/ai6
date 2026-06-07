@@ -6,13 +6,14 @@
           <el-icon class="logo-icon"><Promotion /></el-icon>
           <span class="title">预览模式</span>
           <el-tag type="success" effect="light">实时预览</el-tag>
+          <el-tag type="warning" effect="light">角色: {{ currentRole }}</el-tag>
         </div>
         <div class="header-right">
-          <el-select v-model="currentRole" placeholder="选择角色" size="small" style="width: 120px; margin-right: 12px;">
-            <el-option label="admin" value="admin" />
-            <el-option label="editor" value="editor" />
-            <el-option label="viewer" value="viewer" />
-            <el-option label="guest" value="guest" />
+          <el-select v-model="currentRole" placeholder="选择角色" size="small" style="width: 140px; margin-right: 12px;">
+            <el-option label="admin (管理员)" value="admin" />
+            <el-option label="editor (编辑)" value="editor" />
+            <el-option label="viewer (访客)" value="viewer" />
+            <el-option label="guest (游客)" value="guest" />
           </el-select>
           <el-breadcrumb separator="/">
             <el-breadcrumb-item v-for="item in breadcrumbs" :key="item.path">
@@ -58,7 +59,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onBeforeMount } from 'vue'
+import { ref, computed, watch, onBeforeMount, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useMenuStore } from '@/store/menu'
 import { ElMessage } from 'element-plus'
@@ -68,22 +69,59 @@ const router = useRouter()
 const route = useRoute()
 const menuStore = useMenuStore()
 
-const currentRole = ref('admin')
+const currentRole = ref(menuStore.currentRole)
 const interceptorBlocked = ref(false)
 const blockMessage = ref('')
 const routesRegistered = ref(false)
+const registeredRouteNames = ref([])
+
+function clearDynamicRoutes() {
+  registeredRouteNames.value.forEach(name => {
+    if (router.hasRoute(name)) {
+      router.removeRoute(name)
+      console.log(`[Preview] 移除路由: ${name}`)
+    }
+  })
+  registeredRouteNames.value = []
+  routesRegistered.value = false
+}
+
+function registerDynamicRoutes(role) {
+  clearDynamicRoutes()
+  
+  const routes = menuStore.getAllRoutes(menuStore.menuData, role)
+  const notFoundRoute = {
+    path: '/preview/404',
+    name: 'Preview_404',
+    meta: { title: '404', componentName: 'NotFound' },
+    component: () => import('@/views/preview/NotFound.vue')
+  }
+  const catchAllRoute = {
+    path: '/preview/:pathMatch(.*)*',
+    name: 'Preview_NotFound',
+    meta: { title: '404', componentName: 'NotFound' },
+    component: () => import('@/views/preview/NotFound.vue')
+  }
+  
+  routes.forEach(r => {
+    router.addRoute('Preview', r)
+    registeredRouteNames.value.push(r.name)
+    console.log(`[Preview] 注册路由: ${r.path} -> ${r.name}`)
+  })
+  
+  router.addRoute('Preview', notFoundRoute)
+  registeredRouteNames.value.push(notFoundRoute.name)
+  
+  router.addRoute('Preview', catchAllRoute)
+  registeredRouteNames.value.push(catchAllRoute.name)
+  
+  console.log(`[Preview] 角色 [${role}] 已注册 ${routes.length} 个动态路由 + 2 个 404 路由`)
+  routesRegistered.value = true
+  return routes
+}
 
 const visibleMenuList = computed(() => {
-  const allItems = menuStore.menuData
-  function filterVisible(items) {
-    return items
-      .filter(item => !item.hidden)
-      .map(item => ({
-        ...item,
-        children: item.children ? filterVisible(item.children) : []
-      }))
-  }
-  return filterVisible(allItems)
+  return menuStore.getFlatMenuList(menuStore.menuData, currentRole.value)
 })
 
 const activeMenu = computed(() => route.path)
@@ -104,24 +142,24 @@ const breadcrumbs = computed(() => {
     return null
   }
   
-  const result = findPath(visibleMenuList.value, path)
+  const allMenuData = menuStore.filterMenuByRole(menuStore.menuData, currentRole.value)
+  const result = findPath(allMenuData, path)
   return result || [{ name: '首页', path: '/preview/home' }]
 })
 
-function registerDynamicRoutes() {
-  const routes = menuStore.getAllRoutes()
-  let addedCount = 0
-  
-  routes.forEach(r => {
-    if (!router.hasRoute(r.name)) {
-      router.addRoute('Preview', r)
-      addedCount++
+function checkRoutePermission(to) {
+  if (to.path.startsWith('/preview/') && to.path !== '/preview/404') {
+    if (to.name === 'Preview_NotFound') {
+      console.log(`[Preview] 页面不存在: ${to.path}`)
+      return { path: '/preview/404', query: { from: to.path }, replace: true }
     }
-  })
-  
-  console.log(`[Preview] 已注册 ${addedCount} 个动态路由，共 ${routes.length} 个`)
-  routesRegistered.value = true
-  return routes
+    const hasAccess = menuStore.checkRouteAccess(to.path, currentRole.value)
+    if (!hasAccess) {
+      console.log(`[Preview] 角色 [${currentRole.value}] 无权访问: ${to.path}`)
+      return { path: '/preview/404', query: { from: to.path }, replace: true }
+    }
+  }
+  return true
 }
 
 function checkInterceptor(to) {
@@ -168,6 +206,29 @@ function checkInterceptor(to) {
   return true
 }
 
+function handleRoleChange(newRole) {
+  menuStore.currentRole = newRole
+  ElMessage.success(`已切换角色为: ${newRole}`)
+  
+  console.log(`[Preview] 角色切换，重新注册路由...`)
+  const routes = registerDynamicRoutes(newRole)
+  
+  const currentPath = route.path
+  const hasAccess = menuStore.checkRouteAccess(currentPath, newRole)
+  
+  if (!hasAccess || currentPath === '/preview' || currentPath === '/preview/') {
+    const firstVisibleRoute = routes.find(r => !r.meta?.hidden)
+    if (firstVisibleRoute) {
+      console.log(`[Preview] 跳转到角色 [${newRole}] 的第一个可见路由: ${firstVisibleRoute.path}`)
+      nextTick(() => {
+        router.push(firstVisibleRoute.path)
+      })
+    }
+  } else {
+    checkInterceptor(route)
+  }
+}
+
 function goBack() {
   router.push('/config')
 }
@@ -178,8 +239,8 @@ function goHome() {
 }
 
 onBeforeMount(() => {
-  console.log('[Preview] 开始注册动态路由...')
-  const routes = registerDynamicRoutes()
+  console.log(`[Preview] 初始化，角色: ${currentRole.value}`)
+  const routes = registerDynamicRoutes(currentRole.value)
   
   if (route.path === '/preview' || route.path === '/preview/') {
     const firstRoute = routes.find(r => !r.meta?.hidden)
@@ -189,7 +250,26 @@ onBeforeMount(() => {
         router.push(firstRoute.path)
       }, 100)
     }
+  } else {
+    const permissionResult = checkRoutePermission(route)
+    if (permissionResult !== true) {
+      console.log(`[Preview] 初始化时检测到无权限访问: ${route.path}，跳转到 404`)
+      setTimeout(() => {
+        router.replace(permissionResult)
+      }, 100)
+    }
   }
+})
+
+const unBeforeEach = router.beforeEach((to, from, next) => {
+  if (routesRegistered.value && to.path.startsWith('/preview/')) {
+    const result = checkRoutePermission(to)
+    if (result !== true) {
+      next(result)
+      return
+    }
+  }
+  next()
 })
 
 watch(route, (to) => {
@@ -198,11 +278,8 @@ watch(route, (to) => {
   }
 }, { immediate: false })
 
-watch(currentRole, () => {
-  ElMessage.info(`已切换角色为: ${currentRole.value}`)
-  if (routesRegistered.value) {
-    checkInterceptor(route)
-  }
+watch(currentRole, (newRole) => {
+  handleRoleChange(newRole)
 })
 
 watch(routesRegistered, (registered) => {

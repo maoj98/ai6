@@ -11,6 +11,7 @@ const defaultMenuData = [
     icon: 'HomeFilled',
     component: 'Home',
     hidden: false,
+    visibleRoles: ['admin', 'editor', 'viewer', 'guest'],
     params: [],
     interceptor: null,
     children: []
@@ -22,6 +23,7 @@ const defaultMenuData = [
     icon: 'Setting',
     component: 'Layout',
     hidden: false,
+    visibleRoles: ['admin', 'editor'],
     params: [],
     interceptor: null,
     children: [
@@ -32,6 +34,7 @@ const defaultMenuData = [
         icon: 'User',
         component: 'User',
         hidden: false,
+        visibleRoles: ['admin'],
         params: [{ key: 'id', type: 'number', required: true }],
         interceptor: { type: 'auth', roles: ['admin'] },
         children: []
@@ -43,6 +46,7 @@ const defaultMenuData = [
         icon: 'UserFilled',
         component: 'Role',
         hidden: false,
+        visibleRoles: ['admin', 'editor'],
         params: [],
         interceptor: null,
         children: []
@@ -56,6 +60,7 @@ const defaultMenuData = [
     icon: 'DataAnalysis',
     component: 'Layout',
     hidden: false,
+    visibleRoles: ['admin', 'editor', 'viewer'],
     params: [],
     interceptor: null,
     children: [
@@ -66,6 +71,7 @@ const defaultMenuData = [
         icon: 'TrendCharts',
         component: 'Statistics',
         hidden: false,
+        visibleRoles: ['admin', 'editor', 'viewer'],
         params: [],
         interceptor: null,
         children: []
@@ -74,11 +80,27 @@ const defaultMenuData = [
   }
 ]
 
+const ROLES = ['admin', 'editor', 'viewer', 'guest']
+
+function migrateData(items) {
+  return items.map(item => {
+    const migrated = { ...item }
+    if (!migrated.visibleRoles || !Array.isArray(migrated.visibleRoles)) {
+      migrated.visibleRoles = ['admin', 'editor', 'viewer', 'guest']
+    }
+    if (migrated.children && migrated.children.length > 0) {
+      migrated.children = migrateData(migrated.children)
+    }
+    return migrated
+  })
+}
+
 function loadFromStorage() {
   try {
     const data = localStorage.getItem(STORAGE_KEY)
     if (data) {
-      return JSON.parse(data)
+      const parsed = JSON.parse(data)
+      return migrateData(parsed)
     }
   } catch (e) {
     console.warn('加载菜单配置失败:', e)
@@ -125,10 +147,33 @@ export const useMenuStore = defineStore('menu', () => {
   const menuData = ref(loadFromStorage())
   const selectedId = ref(null)
   const errors = ref({})
+  const currentRole = ref('admin')
 
   watch(menuData, (newVal) => {
     saveToStorage(newVal)
   }, { deep: true })
+
+  function isVisibleForRole(item, role) {
+    if (!item.visibleRoles || item.visibleRoles.length === 0) {
+      return false
+    }
+    return item.visibleRoles.includes(role)
+  }
+
+  function filterMenuByRole(items, role) {
+    const filtered = []
+    for (const item of items) {
+      if (!isVisibleForRole(item, role)) {
+        continue
+      }
+      const filteredItem = { ...item }
+      if (item.children && item.children.length > 0) {
+        filteredItem.children = filterMenuByRole(item.children, role)
+      }
+      filtered.push(filteredItem)
+    }
+    return filtered
+  }
 
   function generateId() {
     return 'menu-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9)
@@ -164,6 +209,7 @@ export const useMenuStore = defineStore('menu', () => {
       icon: 'Menu',
       component: 'Page',
       hidden: false,
+      visibleRoles: ['admin', 'editor', 'viewer', 'guest'],
       params: [],
       interceptor: null,
       children: []
@@ -305,8 +351,9 @@ export const useMenuStore = defineStore('menu', () => {
     saveToStorage(menuData.value)
   }
 
-  function getFlatMenuList(items = menuData.value, result = []) {
-    for (const item of items) {
+  function getFlatMenuList(items = menuData.value, role = null, result = []) {
+    const filteredItems = role ? filterMenuByRole(items, role) : items
+    for (const item of filteredItems) {
       if (!item.hidden) {
         result.push({
           id: item.id,
@@ -318,7 +365,7 @@ export const useMenuStore = defineStore('menu', () => {
       }
       if (item.children && item.children.length > 0) {
         const childResult = []
-        getFlatMenuList(item.children, childResult)
+        getFlatMenuList(item.children, null, childResult)
         if (result.length > 0 && result[result.length - 1].id === item.id) {
           result[result.length - 1].children = childResult.filter(c => !c.hidden)
         }
@@ -327,8 +374,9 @@ export const useMenuStore = defineStore('menu', () => {
     return result
   }
 
-  function getAllRoutes(items = menuData.value, routes = []) {
-    for (const item of items) {
+  function getAllRoutes(items = menuData.value, role = null, routes = []) {
+    const filteredItems = role ? filterMenuByRole(items, role) : items
+    for (const item of filteredItems) {
       const routeName = `Preview_${item.id.replace(/[^a-zA-Z0-9_]/g, '_')}`
       routes.push({
         path: item.path,
@@ -338,21 +386,33 @@ export const useMenuStore = defineStore('menu', () => {
           icon: item.icon,
           interceptor: item.interceptor,
           params: item.params,
-          componentName: item.component
+          componentName: item.component,
+          visibleRoles: item.visibleRoles
         },
         component: getPreviewComponent(item.component)
       })
       if (item.children && item.children.length > 0) {
-        getAllRoutes(item.children, routes)
+        getAllRoutes(item.children, role, routes)
       }
     }
     return routes
+  }
+
+  function checkRouteAccess(routePath, role) {
+    const allRoutes = getAllRoutes(menuData.value)
+    const route = allRoutes.find(r => r.path === routePath)
+    if (!route) {
+      return false
+    }
+    return isVisibleForRole({ visibleRoles: route.meta.visibleRoles }, role)
   }
 
   return {
     menuData,
     selectedId,
     errors,
+    currentRole,
+    ROLES,
     addMenuItem,
     updateMenuItem,
     deleteMenuItem,
@@ -363,6 +423,9 @@ export const useMenuStore = defineStore('menu', () => {
     validateAll,
     resetToDefault,
     getFlatMenuList,
-    getAllRoutes
+    getAllRoutes,
+    filterMenuByRole,
+    isVisibleForRole,
+    checkRouteAccess
   }
 })

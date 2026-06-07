@@ -60,6 +60,23 @@
             />
             <div class="form-tip">隐藏后在预览页面不显示，但路由仍可访问</div>
           </el-form-item>
+
+          <el-form-item label="可见角色">
+            <el-select
+              v-model="formData.visibleRoles"
+              multiple
+              filterable
+              placeholder="选择可见角色"
+              style="width: 100%;"
+              @change="updateField('visibleRoles', $event)"
+            >
+              <el-option label="admin (管理员)" value="admin" />
+              <el-option label="editor (编辑)" value="editor" />
+              <el-option label="viewer (访客)" value="viewer" />
+              <el-option label="guest (游客)" value="guest" />
+            </el-select>
+            <div class="form-tip">未选择任何角色时，所有角色都不可见</div>
+          </el-form-item>
         </el-collapse-item>
 
         <el-collapse-item name="params" title="路由参数">
@@ -215,6 +232,7 @@ const formData = reactive({
   component: props.item.component,
   icon: props.item.icon,
   hidden: props.item.hidden,
+  visibleRoles: JSON.parse(JSON.stringify(props.item.visibleRoles || ['admin', 'editor', 'viewer', 'guest'])),
   params: JSON.parse(JSON.stringify(props.item.params || [])),
   interceptor: props.item.interceptor ? JSON.parse(JSON.stringify(props.item.interceptor)) : null
 })
@@ -237,6 +255,7 @@ const jsonPreview = computed(() => {
     component: formData.component,
     icon: formData.icon,
     hidden: formData.hidden,
+    visibleRoles: formData.visibleRoles,
     params: formData.params,
     interceptor: formData.interceptor
   }, null, 2)
@@ -248,6 +267,7 @@ watch(() => props.item, (newItem) => {
   formData.component = newItem.component
   formData.icon = newItem.icon
   formData.hidden = newItem.hidden
+  formData.visibleRoles = JSON.parse(JSON.stringify(newItem.visibleRoles || ['admin', 'editor', 'viewer', 'guest']))
   formData.params = JSON.parse(JSON.stringify(newItem.params || []))
   formData.interceptor = newItem.interceptor ? JSON.parse(JSON.stringify(newItem.interceptor)) : null
   interceptorEnabled.value = !!newItem.interceptor
