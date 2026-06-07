@@ -96,19 +96,28 @@ function saveToStorage(data) {
   }
 }
 
-const previewComponents = import.meta.glob('@/views/preview/*.vue')
+const previewComponents = import.meta.glob('/src/views/preview/*.vue')
+
+console.log('[Store] 预加载的预览组件:', Object.keys(previewComponents))
 
 function getPreviewComponent(componentName) {
-  const path = `/src/views/preview/${componentName}.vue`
-  if (previewComponents[path]) {
-    return previewComponents[path]
+  const exactPath = `/src/views/preview/${componentName}.vue`
+  if (previewComponents[exactPath]) {
+    console.log(`[Store] 找到组件: ${componentName} -> ${exactPath}`)
+    return previewComponents[exactPath]
   }
-  const normalizedPath = Object.keys(previewComponents).find(p => 
-    p.endsWith(`/${componentName}.vue`)
-  )
-  if (normalizedPath) {
-    return previewComponents[normalizedPath]
+  
+  const matchedKey = Object.keys(previewComponents).find(p => {
+    const fileName = p.split('/').pop()
+    return fileName === `${componentName}.vue`
+  })
+  
+  if (matchedKey) {
+    console.log(`[Store] 通过匹配找到组件: ${componentName} -> ${matchedKey}`)
+    return previewComponents[matchedKey]
   }
+  
+  console.warn(`[Store] 未找到组件: ${componentName}，使用 GenericPage 替代`)
   return previewComponents['/src/views/preview/GenericPage.vue']
 }
 
@@ -320,14 +329,16 @@ export const useMenuStore = defineStore('menu', () => {
 
   function getAllRoutes(items = menuData.value, routes = []) {
     for (const item of items) {
+      const routeName = `Preview_${item.id.replace(/[^a-zA-Z0-9_]/g, '_')}`
       routes.push({
         path: item.path,
-        name: item.component,
+        name: routeName,
         meta: {
           title: item.name,
           icon: item.icon,
           interceptor: item.interceptor,
-          params: item.params
+          params: item.params,
+          componentName: item.component
         },
         component: getPreviewComponent(item.component)
       })

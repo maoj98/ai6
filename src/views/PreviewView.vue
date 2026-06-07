@@ -35,9 +35,11 @@
               router
               class="preview-menu"
             >
-              <template v-for="item in menuList" :key="item.id">
-                <SubMenuItem :item="item" />
-              </template>
+              <PreviewMenuItem
+                v-for="item in visibleMenuList"
+                :key="item.id"
+                :item="item"
+              />
             </el-menu>
           </el-scrollbar>
         </el-aside>
@@ -56,11 +58,11 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, h, resolveComponent as vueResolveComponent } from 'vue'
+import { ref, computed, watch, onBeforeMount } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useMenuStore } from '@/store/menu'
 import { ElMessage } from 'element-plus'
-import * as ElementPlusIconsVue from '@element-plus/icons-vue'
+import PreviewMenuItem from '@/components/PreviewMenuItem.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -69,13 +71,24 @@ const menuStore = useMenuStore()
 const currentRole = ref('admin')
 const interceptorBlocked = ref(false)
 const blockMessage = ref('')
+const routesRegistered = ref(false)
 
-const menuList = computed(() => menuStore.getFlatMenuList())
+const visibleMenuList = computed(() => {
+  const allItems = menuStore.menuData
+  function filterVisible(items) {
+    return items
+      .filter(item => !item.hidden)
+      .map(item => ({
+        ...item,
+        children: item.children ? filterVisible(item.children) : []
+      }))
+  }
+  return filterVisible(allItems)
+})
 
 const activeMenu = computed(() => route.path)
 
 const breadcrumbs = computed(() => {
-  const crumbs = []
   const path = route.path
   
   function findPath(items, currentPath, parents = []) {
@@ -91,35 +104,24 @@ const breadcrumbs = computed(() => {
     return null
   }
   
-  const result = findPath(menuList.value, path)
+  const result = findPath(visibleMenuList.value, path)
   return result || [{ name: '首页', path: '/preview/home' }]
 })
 
-const SubMenuItem = {
-  name: 'SubMenuItem',
-  props: ['item'],
-  setup(props) {
-    if (props.item.children && props.item.children.length > 0) {
-      return () => h('el-sub-menu', { index: props.item.path }, {
-        title: () => h('span', { class: 'menu-title' }, [
-          h('el-icon', { class: 'menu-icon' }, [h(resolveComponent(props.item.icon || 'Menu'))]),
-          h('span', props.item.name)
-        ]),
-        default: () => props.item.children.map(child => 
-          h(SubMenuItem, { key: child.id, item: child })
-        )
-      })
-    } else {
-      return () => h('el-menu-item', { index: props.item.path }, [
-        h('el-icon', { class: 'menu-icon' }, [h(resolveComponent(props.item.icon || 'Menu'))]),
-        h('span', props.item.name)
-      ])
+function registerDynamicRoutes() {
+  const routes = menuStore.getAllRoutes()
+  let addedCount = 0
+  
+  routes.forEach(r => {
+    if (!router.hasRoute(r.name)) {
+      router.addRoute('Preview', r)
+      addedCount++
     }
-  }
-}
-
-function resolveComponent(name) {
-  return ElementPlusIconsVue[name] || ElementPlusIconsVue['Menu']
+  })
+  
+  console.log(`[Preview] 已注册 ${addedCount} 个动态路由，共 ${routes.length} 个`)
+  routesRegistered.value = true
+  return routes
 }
 
 function checkInterceptor(to) {
@@ -175,29 +177,38 @@ function goHome() {
   router.push('/preview/home')
 }
 
-onMounted(() => {
-  const routes = menuStore.getAllRoutes()
-  routes.forEach(r => {
-    if (!router.hasRoute(r.name)) {
-      router.addRoute('Preview', r)
-    }
-  })
+onBeforeMount(() => {
+  console.log('[Preview] 开始注册动态路由...')
+  const routes = registerDynamicRoutes()
   
-  if (route.path === '/preview') {
+  if (route.path === '/preview' || route.path === '/preview/') {
     const firstRoute = routes.find(r => !r.meta?.hidden)
     if (firstRoute) {
-      router.push(firstRoute.path)
+      console.log(`[Preview] 跳转到第一个可见路由: ${firstRoute.path}`)
+      setTimeout(() => {
+        router.push(firstRoute.path)
+      }, 100)
     }
   }
 })
 
 watch(route, (to) => {
-  checkInterceptor(to)
-}, { immediate: true })
+  if (routesRegistered.value) {
+    checkInterceptor(to)
+  }
+}, { immediate: false })
 
 watch(currentRole, () => {
   ElMessage.info(`已切换角色为: ${currentRole.value}`)
-  checkInterceptor(route)
+  if (routesRegistered.value) {
+    checkInterceptor(route)
+  }
+})
+
+watch(routesRegistered, (registered) => {
+  if (registered) {
+    checkInterceptor(route)
+  }
 })
 </script>
 
@@ -271,10 +282,6 @@ watch(currentRole, () => {
 
 .preview-menu :deep(.el-sub-menu) {
   background: #1f2d3d;
-}
-
-.menu-icon {
-  margin-right: 8px;
 }
 
 .preview-main {

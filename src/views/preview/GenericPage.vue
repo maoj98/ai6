@@ -102,7 +102,7 @@ import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 const route = useRoute()
 const router = useRouter()
 
-const componentName = computed(() => route.name || 'Page')
+const componentName = computed(() => route.meta?.componentName || route.name || 'Page')
 const pageTitle = computed(() => route.meta?.title || '页面')
 const pageIcon = computed(() => {
   const iconName = route.meta?.icon || 'Document'
