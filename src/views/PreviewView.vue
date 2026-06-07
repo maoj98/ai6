@@ -72,8 +72,8 @@ const menuStore = useMenuStore()
 const currentRole = ref(menuStore.currentRole)
 const interceptorBlocked = ref(false)
 const blockMessage = ref('')
-const routesRegistered = ref(false)
 const registeredRouteNames = ref([])
+const routesRegistered = computed(() => registeredRouteNames.value.length > 0)
 
 function clearDynamicRoutes() {
   registeredRouteNames.value.forEach(name => {
@@ -83,12 +83,9 @@ function clearDynamicRoutes() {
     }
   })
   registeredRouteNames.value = []
-  routesRegistered.value = false
 }
 
 function registerDynamicRoutes(role) {
-  clearDynamicRoutes()
-  
   const routes = menuStore.getAllRoutes(menuStore.menuData, role)
   const notFoundRoute = {
     path: '/preview/404',
@@ -103,20 +100,19 @@ function registerDynamicRoutes(role) {
     component: () => import('@/views/preview/NotFound.vue')
   }
   
-  routes.forEach(r => {
+  const allRoutes = [...routes, notFoundRoute, catchAllRoute]
+  const newRouteNames = allRoutes.map(r => r.name)
+  
+  clearDynamicRoutes()
+  
+  allRoutes.forEach(r => {
     router.addRoute('Preview', r)
-    registeredRouteNames.value.push(r.name)
     console.log(`[Preview] 注册路由: ${r.path} -> ${r.name}`)
   })
   
-  router.addRoute('Preview', notFoundRoute)
-  registeredRouteNames.value.push(notFoundRoute.name)
-  
-  router.addRoute('Preview', catchAllRoute)
-  registeredRouteNames.value.push(catchAllRoute.name)
+  registeredRouteNames.value = newRouteNames
   
   console.log(`[Preview] 角色 [${role}] 已注册 ${routes.length} 个动态路由 + 2 个 404 路由`)
-  routesRegistered.value = true
   return routes
 }
 
@@ -213,20 +209,33 @@ function handleRoleChange(newRole) {
   console.log(`[Preview] 角色切换，重新注册路由...`)
   const routes = registerDynamicRoutes(newRole)
   
-  const currentPath = route.path
-  const hasAccess = menuStore.checkRouteAccess(currentPath, newRole)
-  
-  if (!hasAccess || currentPath === '/preview' || currentPath === '/preview/') {
-    const firstVisibleRoute = routes.find(r => !r.meta?.hidden)
-    if (firstVisibleRoute) {
-      console.log(`[Preview] 跳转到角色 [${newRole}] 的第一个可见路由: ${firstVisibleRoute.path}`)
-      nextTick(() => {
+  nextTick(() => {
+    const currentPath = route.path
+    const hasAccess = menuStore.checkRouteAccess(currentPath, newRole)
+    const routeExists = router.hasRoute(`Preview_${currentPath.replace(/[^a-zA-Z0-9_]/g, '_')}`) || 
+                        registeredRouteNames.value.some(name => {
+                          const r = router.getRoutes().find(route => route.name === name)
+                          return r && r.path === currentPath
+                        })
+    
+    console.log(`[Preview] 角色切换后检查 - 当前路径: ${currentPath}, 有权限: ${hasAccess}, 路由存在: ${routeExists}`)
+    
+    if (!hasAccess || !routeExists || currentPath === '/preview' || currentPath === '/preview/') {
+      const firstVisibleRoute = routes.find(r => !r.meta?.hidden)
+      if (firstVisibleRoute) {
+        console.log(`[Preview] 跳转到角色 [${newRole}] 的第一个可见路由: ${firstVisibleRoute.path}`)
         router.push(firstVisibleRoute.path)
-      })
+      }
+    } else {
+      const permissionResult = checkRoutePermission(route)
+      if (permissionResult !== true) {
+        console.log(`[Preview] 角色切换后检测到无权限访问: ${currentPath}，跳转到 404`)
+        router.replace(permissionResult)
+      } else {
+        checkInterceptor(route)
+      }
     }
-  } else {
-    checkInterceptor(route)
-  }
+  })
 }
 
 function goBack() {
@@ -262,9 +271,10 @@ onBeforeMount(() => {
 })
 
 const unBeforeEach = router.beforeEach((to, from, next) => {
-  if (routesRegistered.value && to.path.startsWith('/preview/')) {
+  if (to.path.startsWith('/preview/') && registeredRouteNames.value.length > 0) {
     const result = checkRoutePermission(to)
     if (result !== true) {
+      console.log(`[Preview] 路由守卫拦截: ${to.path} -> ${result.path}`)
       next(result)
       return
     }
@@ -273,7 +283,7 @@ const unBeforeEach = router.beforeEach((to, from, next) => {
 })
 
 watch(route, (to) => {
-  if (routesRegistered.value) {
+  if (registeredRouteNames.value.length > 0) {
     checkInterceptor(to)
   }
 }, { immediate: false })
@@ -282,11 +292,13 @@ watch(currentRole, (newRole) => {
   handleRoleChange(newRole)
 })
 
-watch(routesRegistered, (registered) => {
-  if (registered) {
-    checkInterceptor(route)
+watch(registeredRouteNames, (names) => {
+  if (names.length > 0) {
+    nextTick(() => {
+      checkInterceptor(route)
+    })
   }
-})
+}, { deep: true })
 </script>
 
 <style scoped>
