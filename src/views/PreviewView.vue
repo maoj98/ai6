@@ -31,18 +31,15 @@
           <el-scrollbar>
             <el-menu
               :default-active="activeMenu"
-              :default-openeds="defaultOpeneds"
               :collapse="false"
               :unique-opened="false"
               router
               class="preview-menu"
-              :key="menuKey"
             >
               <PreviewMenuItem
                 v-for="item in visibleMenuList"
                 :key="item.id"
                 :item="item"
-                :activePath="activeMenu"
               />
             </el-menu>
           </el-scrollbar>
@@ -77,7 +74,6 @@ const interceptorBlocked = ref(false)
 const blockMessage = ref('')
 const registeredRouteNames = ref([])
 const routesRegistered = computed(() => registeredRouteNames.value.length > 0)
-const menuKey = ref(0)
 
 function clearDynamicRoutes() {
   registeredRouteNames.value.forEach(name => {
@@ -125,32 +121,6 @@ const visibleMenuList = computed(() => {
 })
 
 const activeMenu = computed(() => route.path)
-
-const defaultOpeneds = computed(() => {
-  const path = route.path
-  const openeds = []
-  const allMenuData = menuStore.filterMenuByRole(menuStore.menuData, currentRole.value)
-  
-  function findParentPaths(items, targetPath, parents = []) {
-    for (const item of items) {
-      if (item.path === targetPath) {
-        return parents
-      }
-      if (item.children && item.children.length > 0) {
-        const found = findParentPaths(item.children, targetPath, [...parents, item.path])
-        if (found) return found
-      }
-    }
-    return null
-  }
-  
-  const parentPaths = findParentPaths(allMenuData, path)
-  if (parentPaths) {
-    openeds.push(...parentPaths)
-  }
-  
-  return openeds
-})
 
 const breadcrumbs = computed(() => {
   const path = route.path
@@ -329,10 +299,6 @@ watch(registeredRouteNames, (names) => {
     })
   }
 }, { deep: true })
-
-watch(() => route.path, () => {
-  menuKey.value++
-})
 </script>
 
 <style scoped>
@@ -398,9 +364,12 @@ watch(() => route.path, () => {
   color: #fff;
 }
 
-.preview-menu :deep(.el-menu-item.is-active),
-.preview-menu :deep(.el-menu-item.menu-item-active),
-.preview-menu :deep(.el-sub-menu.menu-item-active > .el-sub-menu__title) {
+.preview-menu :deep(.el-menu-item.is-active) {
+  background: #409eff !important;
+  color: #fff !important;
+}
+
+.preview-menu :deep(.el-sub-menu.is-active > .el-sub-menu__title) {
   background: #409eff !important;
   color: #fff !important;
 }
@@ -409,8 +378,7 @@ watch(() => route.path, () => {
   background: #1f2d3d;
 }
 
-.preview-menu :deep(.el-sub-menu .el-menu-item.is-active),
-.preview-menu :deep(.el-sub-menu .el-menu-item.menu-item-active) {
+.preview-menu :deep(.el-sub-menu .el-menu-item.is-active) {
   background: #409eff !important;
   color: #fff !important;
 }
@@ -419,8 +387,7 @@ watch(() => route.path, () => {
   background: #263445 !important;
 }
 
-.preview-menu :deep(.el-sub-menu .el-menu-item.is-active:hover),
-.preview-menu :deep(.el-sub-menu .el-menu-item.menu-item-active:hover) {
+.preview-menu :deep(.el-sub-menu .el-menu-item.is-active:hover) {
   background: #409eff !important;
 }
 
